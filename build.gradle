@@ -1,0 +1,17 @@
+group 'windmolen'
+version '1.0-SNAPSHOT'
+
+apply plugin: 'scala'
+apply plugin: 'application'
+
+repositories {
+    jcenter()
+}
+
+mainClassName = "windmolen"
+
+dependencies {
+    compile group: 'org.apache.spark', name: 'spark-mllib_2.11', version: '2.0.1'
+    testCompile group: 'org.scalatest', name: 'scalatest_2.11', version: '2.2.4'
+    testCompile group: 'org.scalacheck', name: 'scalacheck_2.11', version: '1.13.2'
+}
