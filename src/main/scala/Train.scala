@@ -1,3 +1,6 @@
+import java.time.LocalDateTime
+import java.util.Date
+
 import org.apache.spark.mllib.linalg.{DenseVector, Vector}
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.{SparkConf, SparkContext}
@@ -16,8 +19,8 @@ object Train extends App {
     .appName("spark session example")
     .getOrCreate()
 
-  val path = "Delta_wind_forecasting/Kreekraksluis_2014_2015.csv"
-//  val path = "data/train.csv"
+//  val path = "Delta_wind_forecasting/Kreekraksluis_2014_2015.csv"
+  val path = "data/train.csv"
   val dataFrame = sparkSession.read
     .option("header", "true")
       .schema(StructType(Array(
@@ -26,15 +29,23 @@ object Train extends App {
         StructField("MW/H out", DoubleType),
         StructField("beschikbaarheid", DoubleType),
         StructField("windsnelheid", DoubleType),
-        StructField("windrichting", DoubleType)
+        StructField("windrichting", DoubleType),
+        StructField("EELDE_MC_TEMPERATURE", DoubleType),
+        StructField("EELDE_MC_WINDSPEED", DoubleType),
+        StructField("EELDE_MC_WINDDIRECTION", DoubleType),
+        StructField("EELDE_MC_CLOUDCOVER", DoubleType),
+        StructField("EELDE_MC_PRESSURE", DoubleType),
+        StructField("EELDE_MC_RADIATION", DoubleType)
       )))
     .csv(path)
 
   // Load and parse the data file.
 //  val data = MLUtils.loadLibSVMFile(sc, "data/train.csv")
 
-  val data = dataFrame.rdd.map { row: Row =>
-    val vector: Vector = new DenseVector(Array(row.getDouble(3), row.getDouble(4), row.getDouble(5)))
+  val data = dataFrame.rdd.zipWithIndex.map { case (row: Row, index: Long) =>
+    val lineNumber = index + 2 //lines start with 1 and 1 is the header
+    assert(!row.isNullAt(2), s"line $lineNumber $row is not ok")
+    val vector: Vector = new DenseVector(Array(row.getDouble(3), row.getDouble(4), row.getDouble(5), row.getDouble(6), row.getDouble(7), row.getDouble(8), row.getDouble(9), row.getDouble(10), row.getDouble(11)))
     new LabeledPoint(row.getDouble(2), vector)
   }
 
@@ -61,11 +72,11 @@ object Train extends App {
     (point.label, prediction)
   }
   val testMSE = labelsAndPredictions.map{ case(v, p) => math.pow((v - p), 2)}.mean()
-  println("Test Mean Squared Error = " + testMSE)
   println("Learned regression forest model:\n" + model.toDebugString)
+  println("Test Mean Squared Error = " + testMSE)
 
   // Save and load model
-  model.save(sc, "target/tmp/myRandomForestRegressionModel")
-  val sameModel = RandomForestModel.load(sc, "target/tmp/myRandomForestRegressionModel")
+//  model.save(sc, s"target/randomForestRegressionModel${LocalDateTime.now}")
+//  val sameModel = RandomForestModel.load(sc, "target/tmp/myRandomForestRegressionModel")
 
 }
