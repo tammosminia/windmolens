@@ -1,8 +1,11 @@
+import org.apache.spark.mllib.linalg.{DenseVector, Vector}
+import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.mllib.tree.RandomForest
 import org.apache.spark.mllib.tree.model.RandomForestModel
 import org.apache.spark.mllib.util.MLUtils
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.types._
+import org.apache.spark.sql.{Row, SparkSession}
 
 object Train extends App {
   val conf = new SparkConf().setMaster("local").setAppName("train")
@@ -13,13 +16,27 @@ object Train extends App {
     .appName("spark session example")
     .getOrCreate()
 
-  val path = "data/train.csv"
-  val dataFrame = sparkSession.read.option("header", "false").csv(path)
+  val path = "Delta_wind_forecasting/Kreekraksluis_2014_2015.csv"
+//  val path = "data/train.csv"
+  val dataFrame = sparkSession.read
+    .option("header", "true")
+      .schema(StructType(Array(
+        StructField("datum", StringType),
+        StructField("tijd", StringType),
+        StructField("MW/H out", DoubleType),
+        StructField("beschikbaarheid", DoubleType),
+        StructField("windsnelheid", DoubleType),
+        StructField("windrichting", DoubleType)
+      )))
+    .csv(path)
 
   // Load and parse the data file.
 //  val data = MLUtils.loadLibSVMFile(sc, "data/train.csv")
 
-  val data = dataFrame.rdd
+  val data = dataFrame.rdd.map { row: Row =>
+    val vector: Vector = new DenseVector(Array(row.getDouble(3), row.getDouble(4), row.getDouble(5)))
+    new LabeledPoint(row.getDouble(2), vector)
+  }
 
   // Split the data into training and test sets (30% held out for testing)
   val splits = data.randomSplit(Array(0.7, 0.3))
