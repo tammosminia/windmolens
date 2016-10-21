@@ -4,12 +4,13 @@ import java.util.Date
 import org.apache.spark.mllib.linalg.{DenseVector, Vector}
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.{SparkConf, SparkContext}
-import org.apache.spark.mllib.tree.RandomForest
-import org.apache.spark.mllib.tree.model.RandomForestModel
+import org.apache.spark.mllib.tree.{GradientBoostedTrees, RandomForest}
+import org.apache.spark.mllib.tree.model.{GradientBoostedTreesModel, RandomForestModel}
 import org.apache.spark.mllib.util.MLUtils
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{Row, SparkSession}
 import PreProcess._
+import org.apache.spark.mllib.tree.configuration.BoostingStrategy
 import org.apache.spark.rdd.RDD
 
 class Train {
@@ -65,16 +66,7 @@ class Train {
     }
   }
 
-
-  def train(processedData: RDD[ProcessedWindInput]) = {
-    val data: RDD[LabeledPoint] = processedData.map { w =>
-      val vector: Vector = new DenseVector(Array(w.availability, w.direction, w.direction_offset, w.speed, w.temperature))
-      new LabeledPoint(w.mwhOutput, vector)
-    }
-    // Split the data into training and test sets (30% held out for testing)
-    val splits = data.randomSplit(Array(0.7, 0.3))
-    val (trainingData, testData) = (splits(0), splits(1))
-
+  def trainRandomForest(data: RDD[LabeledPoint]): RandomForestModel = {
     // Train a RandomForest model.
     // Empty categoricalFeaturesInfo indicates all features are continuous.
     val numClasses = 2
@@ -85,8 +77,43 @@ class Train {
     val maxDepth = 4
     val maxBins = 32
 
-    val model = RandomForest.trainRegressor(trainingData, categoricalFeaturesInfo,
+    RandomForest.trainRegressor(data, categoricalFeaturesInfo,
       numTrees, featureSubsetStrategy, impurity, maxDepth, maxBins)
+  }
+
+  def trainGradientBoostedTrees(data: RDD[LabeledPoint]): GradientBoostedTreesModel = {
+    // Train a RandomForest model.
+    // Empty categoricalFeaturesInfo indicates all features are continuous.
+    val numClasses = 2
+    val categoricalFeaturesInfo = Map[Int, Int]()
+    val numTrees = 30 // Use more in practice.
+    val featureSubsetStrategy = "auto" // Let the algorithm choose.
+    val impurity = "variance"
+    val maxDepth = 4
+    val maxBins = 32
+
+    // Train a GradientBoostedTrees model.
+    val boostingStrategy = BoostingStrategy.defaultParams("Regression")
+    boostingStrategy.numIterations = 30 // Note: Use more iterations in practice.
+    boostingStrategy.treeStrategy.numClasses = 2
+    boostingStrategy.treeStrategy.maxDepth = 2
+    // Empty categoricalFeaturesInfo indicates all features are continuous.
+    boostingStrategy.treeStrategy.categoricalFeaturesInfo = Map[Int, Int]()
+
+    GradientBoostedTrees.train(data, boostingStrategy)
+  }
+
+  def trainAndEvaluate(processedData: RDD[ProcessedWindInput]) = {
+    val data: RDD[LabeledPoint] = processedData.map { w =>
+      val vector: Vector = new DenseVector(Array(w.availability, w.direction, w.direction_offset, w.speed, w.temperature))
+      new LabeledPoint(w.mwhOutput, vector)
+    }
+    // Split the data into training and test sets (30% held out for testing)
+    val splits = data.randomSplit(Array(0.7, 0.3))
+    val (trainingData, testData) = (splits(0), splits(1))
+
+//    val model = trainRandomForest(trainingData)
+    val model = trainGradientBoostedTrees(trainingData)
 
     // Evaluate model on test instances and compute test error
     val labelsAndPredictions = testData.map { point =>
@@ -103,11 +130,12 @@ class Train {
     model
   }
 
+
 }
 
 object TrainApp extends App {
   val t = new Train()
   val data = t.readData
   val processedData = t.preProcess(data)
-  val model = t.train(processedData)
+  t.trainAndEvaluate(processedData)
 }
