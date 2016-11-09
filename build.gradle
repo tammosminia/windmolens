@@ -3,6 +3,7 @@ version '1.0-SNAPSHOT'
 
 apply plugin: 'scala'
 apply plugin: 'application'
+apply plugin: 'maven'
 
 repositories {
     jcenter()

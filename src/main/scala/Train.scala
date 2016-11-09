@@ -1,29 +1,16 @@
-import java.time.LocalDateTime
-import java.util.Date
-
 import org.apache.spark.mllib.linalg.{DenseVector, Vector}
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.mllib.tree.{GradientBoostedTrees, RandomForest}
 import org.apache.spark.mllib.tree.model.{GradientBoostedTreesModel, RandomForestModel}
-import org.apache.spark.mllib.util.MLUtils
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{Row, SparkSession}
 import PreProcess._
 import org.apache.spark.mllib.tree.configuration.BoostingStrategy
 import org.apache.spark.rdd.RDD
 
-class Train {
-  val conf = new SparkConf().setMaster("local").setAppName("train")
-  val sc = new SparkContext(conf)
-  val sparkSession = SparkSession.builder
-    .config(conf)
-    .appName("spark session example")
-    .getOrCreate()
-
-  def readData: RDD[WindInput] = {
-    //  val path = "Delta_wind_forecasting/Kreekraksluis_2014_2015.csv"
-    val path = "data/train.csv"
+class Train(sparkSession: SparkSession) {
+  def readData(path: String): RDD[WindInput] = {
     val dataFrame = sparkSession.read
       .option("header", "true")
       .schema(StructType(Array(
@@ -134,8 +121,18 @@ class Train {
 }
 
 object TrainApp extends App {
-  val t = new Train()
-  val data = t.readData
+  def createTrain = {
+    val conf = new SparkConf().setMaster("local").setAppName("train")
+    val sc = new SparkContext(conf)
+    val sparkSession = SparkSession.builder
+      .config(conf)
+      .appName("spark session example")
+      .getOrCreate()
+    new Train(sparkSession)
+  }
+  val t = createTrain
+  //  val path = "Delta_wind_forecasting/Kreekraksluis_2014_2015.csv"
+  val data = t.readData("data/train.csv")
   val processedData = t.preProcess(data)
   t.trainAndEvaluate(processedData)
 }
