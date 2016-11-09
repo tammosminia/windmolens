@@ -9,8 +9,8 @@ import PreProcess._
 import org.apache.spark.mllib.tree.configuration.BoostingStrategy
 import org.apache.spark.rdd.RDD
 
-class Train(sparkSession: SparkSession) {
-  def readData(path: String): RDD[WindInput] = {
+object Train {
+  def readData(sparkSession: SparkSession, path: String): RDD[WindInput] = {
     val dataFrame = sparkSession.read
       .option("header", "true")
       .schema(StructType(Array(
@@ -28,9 +28,6 @@ class Train(sparkSession: SparkSession) {
         StructField("EELDE_MC_RADIATION", DoubleType)
       )))
       .csv(path)
-
-    // Load and parse the data file.
-    //  val data = MLUtils.loadLibSVMFile(sc, "data/train.csv")
 
     dataFrame.rdd.zipWithIndex.map { case (row: Row, index: Long) =>
       try {
@@ -53,7 +50,7 @@ class Train(sparkSession: SparkSession) {
     }
   }
 
-  def trainRandomForest(data: RDD[LabeledPoint]): RandomForestModel = {
+  def trainRandomForest(data: RDD[ProcessedWindInput]): RandomForestModel = {
     // Train a RandomForest model.
     // Empty categoricalFeaturesInfo indicates all features are continuous.
     val numClasses = 2
@@ -64,11 +61,11 @@ class Train(sparkSession: SparkSession) {
     val maxDepth = 4
     val maxBins = 32
 
-    RandomForest.trainRegressor(data, categoricalFeaturesInfo,
+    RandomForest.trainRegressor(data.map(inputToLabeledPoint), categoricalFeaturesInfo,
       numTrees, featureSubsetStrategy, impurity, maxDepth, maxBins)
   }
 
-  def trainGradientBoostedTrees(data: RDD[LabeledPoint]): GradientBoostedTreesModel = {
+  def trainGradientBoostedTrees(data: RDD[ProcessedWindInput]): GradientBoostedTreesModel = {
     // Train a RandomForest model.
     // Empty categoricalFeaturesInfo indicates all features are continuous.
     val numClasses = 2
@@ -81,58 +78,61 @@ class Train(sparkSession: SparkSession) {
 
     // Train a GradientBoostedTrees model.
     val boostingStrategy = BoostingStrategy.defaultParams("Regression")
+    //intellij doet moeilijk over reassignment to val. dat is niet waar. Dit runt wel gewoon
     boostingStrategy.numIterations = 30 // Note: Use more iterations in practice.
     boostingStrategy.treeStrategy.numClasses = 2
     boostingStrategy.treeStrategy.maxDepth = 2
     // Empty categoricalFeaturesInfo indicates all features are continuous.
     boostingStrategy.treeStrategy.categoricalFeaturesInfo = Map[Int, Int]()
 
-    GradientBoostedTrees.train(data, boostingStrategy)
+    val points = data.map(inputToLabeledPoint)
+    GradientBoostedTrees.train(points, boostingStrategy)
   }
 
-  def trainAndEvaluate(processedData: RDD[ProcessedWindInput]) = {
-    val data: RDD[LabeledPoint] = processedData.map { w =>
-      val vector: Vector = new DenseVector(Array(w.availability, w.direction, w.direction_offset, w.speed, w.temperature))
-      new LabeledPoint(w.mwhOutput, vector)
-    }
-    // Split the data into training and test sets (30% held out for testing)
-    val splits = data.randomSplit(Array(0.7, 0.3))
-    val (trainingData, testData) = (splits(0), splits(1))
+  def inputToLabeledPoint(w: ProcessedWindInput): LabeledPoint = {
+    val vector: Vector = new DenseVector(Array(w.availability, w.direction, w.direction_offset, w.speed, w.temperature))
+    new LabeledPoint(w.mwhOutput, vector)
+  }
 
-//    val model = trainRandomForest(trainingData)
-    val model = trainGradientBoostedTrees(trainingData)
-
-    // Evaluate model on test instances and compute test error
-    val labelsAndPredictions = testData.map { point =>
-      val prediction = model.predict(point.features)
-      (point.label, prediction)
+  def evaluate(model: GradientBoostedTreesModel, testData: RDD[ProcessedWindInput]): Unit = {
+    val labelsAndPredictions = testData.map { input =>
+      val prediction = predictMwhOutput(model, input)
+      (input.mwhOutput, prediction)
     }
-    val testMSE = labelsAndPredictions.map{ case(v, p) => math.pow((v - p), 2)}.mean()
+    val testMSE = labelsAndPredictions.map{ case(v, p) => math.pow(v - p, 2)}.mean()
     println("Learned regression forest model:\n" + model.toDebugString)
     println("Test Mean Squared Error = " + testMSE)
-
-    // Save and load model
-    //  model.save(sc, s"target/randomForestRegressionModel${LocalDateTime.now}")
-    //  val sameModel = RandomForestModel.load(sc, "target/tmp/myRandomForestRegressionModel")
-    model
   }
 
+  def predictMwhOutput(model: GradientBoostedTreesModel, input: ProcessedWindInput): Double = {
+    val point = inputToLabeledPoint(input)
+    model.predict(point.features)
+  }
 
-}
-
-object TrainApp extends App {
-  def createTrain = {
+  def createSparkSession: SparkSession = {
     val conf = new SparkConf().setMaster("local").setAppName("train")
     val sc = new SparkContext(conf)
-    val sparkSession = SparkSession.builder
+    SparkSession.builder
       .config(conf)
       .appName("spark session example")
       .getOrCreate()
-    new Train(sparkSession)
   }
-  val t = createTrain
+
+}
+import Train._
+
+object TrainApp extends App {
   //  val path = "Delta_wind_forecasting/Kreekraksluis_2014_2015.csv"
-  val data = t.readData("data/train.csv")
-  val processedData = t.preProcess(data)
-  t.trainAndEvaluate(processedData)
+  val data = readData(createSparkSession, "data/train.csv")
+  val processedData = preProcess(data)
+
+  val splits = processedData.randomSplit(Array(0.7, 0.3))
+  val (trainingData, testData) = (splits(0), splits(1))
+
+  val model = trainGradientBoostedTrees(trainingData)
+  evaluate(model, testData)
+
+  // Save and load model
+  //  model.save(sc, s"target/randomForestRegressionModel${LocalDateTime.now}")
+  //  val sameModel = RandomForestModel.load(sc, "target/tmp/myRandomForestRegressionModel")
 }
